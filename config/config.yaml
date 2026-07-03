@@ -1,0 +1,32 @@
+project:
+  name: Airtime Bias
+  package: airtime_bias
+  description: Computer vision for narrative airtime analysis in reality TV.
+
+paths:
+  data_dir: data
+  raw_video_dir: data/raw/videos
+  references_dir: data/references/participants
+  interim_dir: data/interim
+  processed_dir: data/processed
+  validation_dir: data/validation
+
+scene_detection:
+  detector: content
+  threshold: 27.0
+  min_scene_len_frames: 15
+
+frame_sampling:
+  frames_per_segment: 5
+
+commentary_detection:
+  min_duration_seconds: 2.0
+  max_faces_allowed: 1
+  min_face_area_ratio: 0.03
+  max_center_distance: 0.35
+  candidate_threshold: 0.70
+  review_threshold: 0.50
+
+identity_matching:
+  min_identity_confidence: 0.60
+  unknown_label: unknown

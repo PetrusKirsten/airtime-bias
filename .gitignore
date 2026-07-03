@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment variables
+.env
+.streamlit/secrets.toml
+
+# Local data and media
+# Keep copyrighted media, extracted frames, reference photos and embeddings out of Git.
+data/raw/**
+data/references/**
+data/interim/**
+data/processed/**
+data/validation/**
+
+# Keep empty folder placeholders
+!data/raw/.gitkeep
+!data/raw/videos/.gitkeep
+!data/references/.gitkeep
+!data/references/participants/.gitkeep
+!data/interim/.gitkeep
+!data/interim/scenes/.gitkeep
+!data/interim/sampled_frames/.gitkeep
+!data/interim/embeddings/.gitkeep
+!data/processed/.gitkeep
+!data/validation/.gitkeep
+
+# Media/model artifacts anywhere
+*.mp4
+*.mkv
+*.avi
+*.mov
+*.jpg
+*.jpeg
+*.png
+*.webp
+*.pkl
+*.joblib
+*.npy
+*.npz
+*.parquet
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
