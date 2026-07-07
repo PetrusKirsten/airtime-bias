@@ -56,7 +56,7 @@ if not parts_with_paths["selected_video_exists"].all():
             ~parts_with_paths["selected_video_exists"],
             ["episode_id", "part_id", "video_filename", "selected_video_path"],
         ],
-        use_container_width=True,
+        width='stretch',
     )
     st.stop()
 
@@ -125,7 +125,7 @@ st.caption(
 st.subheader("Parts to process")
 st.dataframe(
     selected_parts[["episode_id", "part_id", "part_order", "selected_video_path"]],
-    use_container_width=True,
+    width='stretch',
 )
 
 safe_threshold = str(threshold).replace(".", "p")
@@ -183,7 +183,7 @@ def _render_scene_diagnostics(scenes: pd.DataFrame) -> None:
         col8.metric("Max", f"{row['max_duration']:.2f}s")
 
         with st.expander("Full duration summary table", expanded=False):
-            st.dataframe(summary.round(4), use_container_width=True)
+            st.dataframe(summary.round(4), width='stretch')
 
     tab1, tab2, tab3, tab4 = st.tabs(
         [
@@ -197,22 +197,22 @@ def _render_scene_diagnostics(scenes: pd.DataFrame) -> None:
     with tab1:
         fig = plot_scene_duration_histogram(scenes)
         if fig is not None:
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
 
     with tab2:
         fig = plot_duration_bucket_share(scenes)
         if fig is not None:
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
 
     with tab3:
         fig = plot_scene_count_by_part(scenes)
         if fig is not None:
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
 
     with tab4:
         fig = plot_scene_duration_by_part(scenes)
         if fig is not None:
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
 
 
 if st.button("Run scene detection"):
@@ -230,7 +230,7 @@ if st.button("Run scene detection"):
     status_table_placeholder = st.empty()
 
     with st.status("Running scene detection...", expanded=True) as status:
-        status_table_placeholder.dataframe(status_rows, use_container_width=True)
+        status_table_placeholder.dataframe(status_rows, width='stretch')
 
         for index, (_, part) in enumerate(selected_parts.iterrows(), start=1):
             part_id = str(part["part_id"])
@@ -250,7 +250,7 @@ if st.button("Run scene detection"):
                 "status",
             ] = "running"
 
-            status_table_placeholder.dataframe(status_rows, use_container_width=True)
+            status_table_placeholder.dataframe(status_rows, width='stretch')
 
             try:
                 part_duration = get_video_duration_seconds(video_path)
@@ -290,7 +290,7 @@ if st.button("Run scene detection"):
                     "status",
                 ] = "error"
 
-                status_table_placeholder.dataframe(status_rows, use_container_width=True)
+                status_table_placeholder.dataframe(status_rows, width='stretch')
 
                 status.update(
                     label="Scene detection failed.",
@@ -306,7 +306,7 @@ if st.button("Run scene detection"):
                 text=f"Completed part {index}/{total_parts}: {part_id}",
             )
 
-            status_table_placeholder.dataframe(status_rows, use_container_width=True)
+            status_table_placeholder.dataframe(status_rows, width='stretch')
 
         if scene_tables:
             scenes = pd.concat(scene_tables, ignore_index=True)
@@ -336,14 +336,14 @@ if st.button("Run scene detection"):
     _render_scene_diagnostics(scenes)
 
     st.subheader("Detected scenes")
-    st.dataframe(scenes, use_container_width=True)
+    st.dataframe(scenes, width='stretch')
 
 else:
     existing = load_table(latest_output_path)
 
     if not existing.empty:
         st.subheader("Existing latest full-episode scene table")
-        st.dataframe(existing, use_container_width=True)
+        st.dataframe(existing, width='stretch')
         _render_scene_diagnostics(existing)
     else:
         st.info("No latest full-episode scene table found yet for this episode.")
