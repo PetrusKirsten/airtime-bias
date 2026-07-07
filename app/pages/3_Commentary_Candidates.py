@@ -18,6 +18,6 @@ if not scene_files:
 
 selected = st.selectbox("Scene table", scene_files, format_func=lambda p: p.name)
 scenes = load_table(selected)
-st.dataframe(scenes, use_container_width=True)
+st.dataframe(scenes, width='stretch')
 
 st.info("Next implementation: sample frames, detect faces and compute commentary_score.")

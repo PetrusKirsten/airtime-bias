@@ -18,7 +18,7 @@ if segments.empty:
 metrics = build_exposure_metrics(segments, metadata)
 metrics = add_episode_zscores(metrics)
 
-st.dataframe(metrics, use_container_width=True)
+st.dataframe(metrics, width='stretch')
 fig = plot_exposure_ranking(metrics)
 if fig:
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')

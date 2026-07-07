@@ -19,7 +19,7 @@ Review low-confidence predictions, correct participant identities and mark false
 """
 )
 
-edited = st.data_editor(df, use_container_width=True, num_rows="dynamic")
+edited = st.data_editor(df, width='stretch', num_rows="dynamic")
 if st.button("Save reviewed table"):
     save_table(edited, path)
     st.success("Reviewed table saved.")

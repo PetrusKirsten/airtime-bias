@@ -5,6 +5,8 @@ DATA_DIR = PROJECT_ROOT / "data"
 RAW_VIDEO_DIR = DATA_DIR / "raw" / "videos"
 REFERENCES_DIR = DATA_DIR / "references" / "participants"
 INTERIM_DIR = DATA_DIR / "interim"
+METADATA_DIR = INTERIM_DIR / "metadata"
+PROXY_VIDEO_DIR = INTERIM_DIR / "proxies"
 PROCESSED_DIR = DATA_DIR / "processed"
 VALIDATION_DIR = DATA_DIR / "validation"
 CONFIG_PATH = PROJECT_ROOT / "config" / "config.yaml"
@@ -15,6 +17,8 @@ def ensure_project_dirs() -> None:
     for path in [
         RAW_VIDEO_DIR,
         REFERENCES_DIR,
+        METADATA_DIR,
+        PROXY_VIDEO_DIR,
         INTERIM_DIR / "scenes",
         INTERIM_DIR / "sampled_frames",
         INTERIM_DIR / "embeddings",

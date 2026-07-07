@@ -15,4 +15,4 @@ col1, col2 = st.columns(2)
 col1.metric("Commentary detection precision", detection_precision(review) or "N/A")
 col2.metric("Participant identity accuracy", identity_accuracy(review) or "N/A")
 
-st.dataframe(review, use_container_width=True)
+st.dataframe(review, width='stretch')
