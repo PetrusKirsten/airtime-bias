@@ -8,20 +8,20 @@ import plotly.express as px
 # Airtime Bias - Plot styling system
 # ============================================================
 
-PRIMARY_BLUE = "#5FACF0"
-PRIMARY_BLUE_DARK = "#2F5D8A"
+PRIMARY_BLUE       = "#5FACF0"
+PRIMARY_BLUE_DARK  = "#2F5D8A"
 PRIMARY_BLUE_LIGHT = "#8FBCE6"
-ACCENT_RED = "#E45756"
-ACCENT_GOLD = "#F3A712"
+ACCENT_RED         = "#E45756"
+ACCENT_GOLD        = "#F3A712"
 
-GRID_COLOR = "rgba(255, 255, 255, 0.10)"
+GRID_COLOR      = "rgba(255, 255, 255, 0.10)"
 AXIS_LINE_COLOR = "rgba(255, 255, 255, 0.22)"
-BAR_BORDER = "rgba(255, 255, 255, 0.70)"
+BAR_BORDER      = "rgba(255, 255, 255, 0.70)"
 
 PAPER_BG = "rgba(0,0,0,0)"
-PLOT_BG = "rgba(0,0,0,0)"
+PLOT_BG  = "rgba(0,0,0,0)"
 
-FONT_COLOR = "#EDEDED"
+FONT_COLOR  = "#EDEDED"
 TITLE_COLOR = "#FFFFFF"
 SUBTLE_TEXT = "#BFBFBF"
 
