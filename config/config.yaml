@@ -13,11 +13,18 @@ paths:
 
 scene_detection:
   detector: content
-  threshold: 27.0
-  min_scene_len_frames: 15
+  threshold: 44.0
+  min_scene_len_seconds: 2.0
 
 frame_sampling:
-  frames_per_segment: 5
+  frame_positions:
+    - start
+    - middle
+    - end
+  edge_margin_seconds: 0.25
+  jpeg_quality: 85
+  max_width: null
+  development_max_scenes: 50
 
 commentary_detection:
   min_duration_seconds: 2.0
