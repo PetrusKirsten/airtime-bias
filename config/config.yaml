@@ -27,8 +27,9 @@ frame_sampling:
   development_max_scenes: 50
 
 face_detection:
-  model_selection: 1
+  model_selection: 0
   min_detection_confidence: 0.50
+  min_suppression_threshold: 0.30
   use_middle_prefilter: true
   prefilter_min_face_area_ratio: 0.02
   prefilter_max_center_distance: 0.55
