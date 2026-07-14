@@ -10,8 +10,21 @@ from airtime_bias.commentary.candidate_detection import (
     build_commentary_candidate_table,
 )
 from airtime_bias.features.visual_face_features import extract_face_features_from_samples
+from airtime_bias.io.artifact_history import (
+    artifact_label,
+    list_artifacts,
+    load_manifest,
+    parameter_fingerprint,
+    preferred_artifact_index,
+    write_manifest,
+)
 from airtime_bias.io.loaders import load_config, load_table
-from airtime_bias.io.paths import INTERIM_DIR, PROCESSED_DIR, ensure_project_dirs
+from airtime_bias.io.paths import (
+    INTERIM_DIR,
+    PROCESSED_DIR,
+    VALIDATION_DIR,
+    ensure_project_dirs,
+)
 from airtime_bias.io.writers import save_table
 from airtime_bias.vision.face_detection import FaceDetectorConfig
 from airtime_bias.visualization.candidate_plots import (
@@ -22,18 +35,13 @@ from airtime_bias.visualization.candidate_plots import (
 
 ensure_project_dirs()
 
-st.set_page_config(
-    page_title="Commentary Candidates",
-    page_icon="🎯",
-    layout="wide",
-)
-
+st.set_page_config(page_title="Commentary Candidates", page_icon="🎯", layout="wide")
 st.title("🎯 Commentary Candidate Detection")
 st.markdown(
     """
 Reduce thousands of raw shots to a smaller set of likely participant commentary scenes.
-The workflow uses a **recall-oriented middle-frame prefilter**, then evaluates start,
-middle, and end frames only for scenes that survive the cheap first pass.
+Saved analyses remain available after page navigation and may be converted into a manual
+review queue.
 """
 )
 
@@ -44,8 +52,9 @@ face_defaults = config.get("face_detection", {})
 FRAME_TABLE_DIR = INTERIM_DIR / "sampled_frames" / "tables"
 FACE_FEATURE_DIR = INTERIM_DIR / "face_features"
 CANDIDATE_DIR = PROCESSED_DIR / "commentary_candidates"
+REVIEW_QUEUE_DIR = VALIDATION_DIR / "commentary_reviews"
 
-frame_table_files = sorted(FRAME_TABLE_DIR.glob("*_frame_samples.parquet"))
+frame_table_files = list_artifacts(FRAME_TABLE_DIR, "*_frame_samples.parquet")
 if not frame_table_files:
     st.warning("No frame sample tables found. Run Frame Sampling first.")
     st.stop()
@@ -53,7 +62,7 @@ if not frame_table_files:
 selected_frame_table = st.selectbox(
     "Frame sample table",
     options=frame_table_files,
-    format_func=lambda path: path.name,
+    format_func=lambda path: artifact_label(path, FRAME_TABLE_DIR),
 )
 
 frame_samples = load_table(selected_frame_table)
@@ -61,7 +70,14 @@ if frame_samples.empty:
     st.error("The selected frame sample table is empty.")
     st.stop()
 
-required_columns = {"episode_id", "part_id", "segment_id", "frame_position", "frame_path", "success"}
+required_columns = {
+    "episode_id",
+    "part_id",
+    "segment_id",
+    "frame_position",
+    "frame_path",
+    "success",
+}
 missing_columns = required_columns - set(frame_samples.columns)
 if missing_columns:
     st.error(f"Frame sample table is missing required columns: {sorted(missing_columns)}")
@@ -105,8 +121,12 @@ with face_col_1:
     model_selection = st.selectbox(
         "MediaPipe model range",
         options=[0, 1],
-        index=1 if int(face_defaults.get("model_selection", 1)) == 1 else 0,
+        index=1 if int(face_defaults.get("model_selection", 0)) == 1 else 0,
         format_func=lambda value: "Full range" if value == 1 else "Short range",
+        help=(
+            "The current MediaPipe Tasks fallback uses the portable short-range model. "
+            "The range selector is retained for legacy MediaPipe installations."
+        ),
     )
 
 with face_col_2:
@@ -253,20 +273,80 @@ metric_4.metric("Conditional frames", f"{max_additional_frames:,}")
 
 scope_token = selected_part_id if selected_part_id is not None else "all_parts"
 mode_token = f"dev{scene_count}" if development_mode else "full"
-experiment_name = f"{Path(selected_frame_table).stem}__{scope_token}__{mode_token}"
+run_parameters = {
+    "source_frame_table": str(selected_frame_table),
+    "episode_id": episode_id,
+    "scope": scope_token,
+    "mode": mode_token,
+    "model_selection": int(model_selection),
+    "min_detection_confidence": float(min_detection_confidence),
+    "use_middle_prefilter": bool(use_middle_prefilter),
+    "prefilter_min_face_area_ratio": float(prefilter_min_area),
+    "prefilter_max_center_distance": float(prefilter_max_center),
+    "prefilter_max_faces": int(prefilter_max_faces),
+    "min_duration_seconds": float(min_duration_seconds),
+    "min_face_area_ratio": float(min_face_area_ratio),
+    "max_center_distance": float(max_center_distance),
+    "review_threshold": float(review_threshold),
+    "candidate_threshold": float(candidate_threshold),
+}
+config_token = parameter_fingerprint(run_parameters)
+experiment_name = f"{episode_id}__{scope_token}__{mode_token}__candcfg{config_token}"
 face_feature_path = FACE_FEATURE_DIR / f"{experiment_name}_face_features.parquet"
 candidate_path = CANDIDATE_DIR / f"{experiment_name}_commentary_candidates.parquet"
+manifest_path = candidate_path.with_suffix(".manifest.json")
 
 with st.expander("Execution details", expanded=False):
     st.write(f"**Input frame table:** `{selected_frame_table}`")
     st.write(f"**Face features:** `{face_feature_path}`")
     st.write(f"**Candidate table:** `{candidate_path}`")
+    st.json(run_parameters)
+
+
+def _source_table_from_run(
+    candidates: pd.DataFrame,
+    manifest: dict,
+    fallback: Path,
+) -> Path:
+    manifest_source = manifest.get("source_frame_table")
+    if isinstance(manifest_source, str) and manifest_source:
+        return Path(manifest_source)
+
+    if "source_frame_table" in candidates.columns and not candidates.empty:
+        value = candidates["source_frame_table"].dropna()
+        if not value.empty:
+            return Path(str(value.iloc[0]))
+    return fallback
+
+
+def _create_review_queue(
+    candidates: pd.DataFrame,
+    run_id: str,
+    candidate_table_path: Path,
+    source_frame_table: Path,
+) -> Path:
+    queue = candidates[candidates["candidate_tier"].isin(["candidate", "review"])].copy()
+    queue["manual_review_status"] = "pending"
+    queue["manual_is_commentary"] = pd.NA
+    queue["manual_notes"] = ""
+    queue["manual_identity"] = pd.NA
+    queue["source_candidate_table"] = str(candidate_table_path)
+    queue["source_frame_table"] = str(source_frame_table)
+    queue["review_run_id"] = run_id
+
+    review_path = REVIEW_QUEUE_DIR / f"{run_id}_review_queue.parquet"
+    save_table(queue, review_path)
+    return review_path
 
 
 def _render_candidate_results(
     face_features: pd.DataFrame,
     candidates: pd.DataFrame,
     source_samples: pd.DataFrame,
+    *,
+    run_id: str,
+    candidate_table_path: Path,
+    source_frame_table: Path,
 ) -> None:
     if candidates.empty:
         st.info("No candidate rows were generated.")
@@ -302,23 +382,24 @@ def _render_candidate_results(
     with chart_tab:
         chart_col_1, chart_col_2 = st.columns(2)
         with chart_col_1:
-            fig = plot_commentary_score_distribution(candidates)
-            if fig is not None:
-                st.plotly_chart(fig, width="stretch")
+            figure = plot_commentary_score_distribution(candidates)
+            if figure is not None:
+                st.plotly_chart(figure, width="stretch")
         with chart_col_2:
-            fig = plot_candidate_tier_counts(candidates)
-            if fig is not None:
-                st.plotly_chart(fig, width="stretch")
+            figure = plot_candidate_tier_counts(candidates)
+            if figure is not None:
+                st.plotly_chart(figure, width="stretch")
 
-        fig = plot_face_geometry_map(candidates)
-        if fig is not None:
-            st.plotly_chart(fig, width="stretch")
+        figure = plot_face_geometry_map(candidates)
+        if figure is not None:
+            st.plotly_chart(figure, width="stretch")
 
     with gallery_tab:
         tier_filter = st.multiselect(
             "Decision tiers",
             options=["candidate", "review", "reject"],
             default=["candidate", "review"],
+            key=f"tier_filter_{run_id}",
         )
         gallery_candidates = candidates[
             candidates["candidate_tier"].isin(tier_filter)
@@ -326,12 +407,15 @@ def _render_candidate_results(
 
         if gallery_candidates.empty:
             st.info("No scenes match the selected tiers.")
+        elif source_samples.empty:
+            st.warning("The source frame table for this saved run could not be loaded.")
         else:
             gallery_limit = st.slider(
                 "Scenes to preview",
                 min_value=1,
                 max_value=min(40, len(gallery_candidates)),
                 value=min(12, len(gallery_candidates)),
+                key=f"candidate_gallery_limit_{run_id}",
             )
             preview_candidates = gallery_candidates.head(gallery_limit)
 
@@ -379,6 +463,49 @@ def _render_candidate_results(
         else:
             st.dataframe(errors, width="stretch")
 
+    st.markdown("### Next step: manual candidate review")
+    st.write(
+        "Candidate detection does not identify participants and does not yet confirm that "
+        "a retained shot is truly commentary. Create a review queue containing only the "
+        "`candidate` and `review` tiers."
+    )
+
+    review_path = REVIEW_QUEUE_DIR / f"{run_id}_review_queue.parquet"
+    action_col_1, action_col_2 = st.columns([1, 2])
+    with action_col_1:
+        if st.button(
+            "Create or refresh review queue",
+            type="primary",
+            key=f"create_review_queue_{run_id}",
+        ):
+            saved_review_path = _create_review_queue(
+                candidates,
+                run_id,
+                candidate_table_path,
+                source_frame_table,
+            )
+            st.success(f"Saved review queue to `{saved_review_path}`")
+
+    with action_col_2:
+        if review_path.exists():
+            review_queue = load_table(review_path)
+            reviewed_count = 0
+            if "manual_review_status" in review_queue.columns:
+                reviewed_count = int(
+                    (review_queue["manual_review_status"].astype(str) == "reviewed").sum()
+                )
+            st.info(
+                f"Review queue available: {len(review_queue):,} scenes · "
+                f"{reviewed_count:,} already reviewed."
+            )
+            st.page_link(
+                "pages/5_Candidate_Review.py",
+                label="Continue to Candidate Review",
+                icon="✅",
+            )
+        else:
+            st.caption("Create the review queue to unlock the next pipeline stage.")
+
 
 if st.button("Detect commentary candidates", type="primary"):
     progress_bar = st.progress(0, text="Preparing face analysis...")
@@ -419,23 +546,91 @@ if st.button("Detect commentary candidates", type="primary"):
                 frame_features=face_features,
                 config=score_config,
             )
+
+            face_features["source_frame_table"] = str(selected_frame_table)
+            face_features["candidate_run_id"] = experiment_name
+            face_features["candidate_config_id"] = config_token
+            candidates["source_frame_table"] = str(selected_frame_table)
+            candidates["candidate_run_id"] = experiment_name
+            candidates["candidate_config_id"] = config_token
+
             save_table(face_features, face_feature_path)
             save_table(candidates, candidate_path)
+            write_manifest(
+                manifest_path,
+                {
+                    "stage": "commentary_candidate_detection",
+                    "run_id": experiment_name,
+                    "config_id": config_token,
+                    "source_frame_table": str(selected_frame_table),
+                    "face_feature_table": str(face_feature_path),
+                    "candidate_table": str(candidate_path),
+                    "scene_count": int(len(candidates)),
+                    "candidate_count": int(candidates["is_candidate"].fillna(False).sum()),
+                    "review_count": int(candidates["review_required"].fillna(False).sum()),
+                    "parameters": run_parameters,
+                },
+            )
+            st.session_state["commentary_candidates_last_output"] = str(candidate_path)
         except Exception as exc:
-            status.update(label="Commentary candidate detection failed.", state="error", expanded=True)
+            status.update(
+                label="Commentary candidate detection failed.",
+                state="error",
+                expanded=True,
+            )
             st.exception(exc)
             st.stop()
 
-        status.update(label="Commentary candidate detection complete.", state="complete", expanded=False)
+        status.update(
+            label="Commentary candidate detection complete.",
+            state="complete",
+            expanded=False,
+        )
 
     progress_bar.progress(100, text="Commentary candidate detection complete.")
-    st.success(f"Saved candidate table to `{candidate_path}`")
-    _render_candidate_results(face_features, candidates, samples_to_process)
+    st.success("Candidate analysis was saved and can be reopened from the history below.")
+
+st.divider()
+st.subheader("Saved candidate analyses")
+candidate_history = list_artifacts(CANDIDATE_DIR, "*_commentary_candidates.parquet")
+
+if not candidate_history:
+    st.info("No saved commentary candidate analysis is available yet.")
 else:
-    existing_features = load_table(face_feature_path)
-    existing_candidates = load_table(candidate_path)
-    if not existing_features.empty and not existing_candidates.empty:
-        st.subheader("Existing candidate detection results")
-        _render_candidate_results(existing_features, existing_candidates, samples_to_process)
+    preferred = st.session_state.get("commentary_candidates_last_output")
+    selected_candidate_path = st.selectbox(
+        "Analysis to visualize",
+        options=candidate_history,
+        index=preferred_artifact_index(candidate_history, preferred),
+        format_func=lambda path: artifact_label(path, CANDIDATE_DIR),
+        key="commentary_candidate_history_selector",
+    )
+
+    selected_manifest = load_manifest(selected_candidate_path.with_suffix(".manifest.json"))
+    if selected_manifest:
+        with st.expander("Saved execution parameters", expanded=False):
+            st.json(selected_manifest)
+
+    selected_candidates = load_table(selected_candidate_path)
+    run_id = selected_candidate_path.name.removesuffix("_commentary_candidates.parquet")
+    selected_face_feature_path = FACE_FEATURE_DIR / f"{run_id}_face_features.parquet"
+    selected_face_features = load_table(selected_face_feature_path)
+    source_frame_table = _source_table_from_run(
+        selected_candidates,
+        selected_manifest,
+        selected_frame_table,
+    )
+    source_samples = load_table(source_frame_table)
+
+    st.caption(f"Loaded `{selected_candidate_path}`")
+    if selected_face_features.empty:
+        st.warning(f"Related face feature table was not found: `{selected_face_feature_path}`")
     else:
-        st.info("Run a development batch first, inspect recall visually, then scale to a full part.")
+        _render_candidate_results(
+            selected_face_features,
+            selected_candidates,
+            source_samples,
+            run_id=run_id,
+            candidate_table_path=selected_candidate_path,
+            source_frame_table=source_frame_table,
+        )
