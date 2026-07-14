@@ -57,17 +57,28 @@ review_queue = review_queue.copy()
 if "manual_review_status" not in review_queue.columns:
     review_queue["manual_review_status"] = "pending"
 if "manual_is_commentary" not in review_queue.columns:
-    review_queue["manual_is_commentary"] = pd.NA
+    review_queue["manual_is_commentary"] = pd.Series(
+        pd.NA,
+        index=review_queue.index,
+        dtype="boolean",
+    )
+else:
+    review_queue["manual_is_commentary"] = review_queue["manual_is_commentary"].astype(
+        "boolean"
+    )
 if "manual_notes" not in review_queue.columns:
     review_queue["manual_notes"] = ""
 if "manual_identity" not in review_queue.columns:
-    review_queue["manual_identity"] = pd.NA
+    review_queue["manual_identity"] = pd.Series(
+        pd.NA,
+        index=review_queue.index,
+        dtype="string",
+    )
 
 review_queue["segment_id"] = review_queue["segment_id"].astype(str)
 status_series = review_queue["manual_review_status"].fillna("pending").astype(str)
-confirmed_mask = review_queue["manual_is_commentary"].eq(True)
-rejected_mask = review_queue["manual_is_commentary"].eq(False)
-reviewed_mask = status_series.eq("reviewed")
+confirmed_mask = review_queue["manual_is_commentary"].eq(True).fillna(False)
+rejected_mask = review_queue["manual_is_commentary"].eq(False).fillna(False)
 uncertain_mask = status_series.eq("uncertain")
 
 metric_1, metric_2, metric_3, metric_4, metric_5 = st.columns(5)
@@ -189,13 +200,17 @@ if feature_columns:
         st.dataframe(pd.DataFrame([selected_row[feature_columns]]), width="stretch")
 
 current_status = str(selected_row.get("manual_review_status", "pending"))
+manual_value = selected_row.get("manual_is_commentary")
 current_decision = "Pending"
 if current_status == "uncertain":
     current_decision = "Uncertain"
-elif selected_row.get("manual_is_commentary") is True:
-    current_decision = "Commentary"
-elif selected_row.get("manual_is_commentary") is False:
-    current_decision = "Not commentary"
+elif pd.notna(manual_value):
+    current_decision = "Commentary" if bool(manual_value) else "Not commentary"
+
+identity_value = selected_row.get("manual_identity")
+identity_text = "" if pd.isna(identity_value) else str(identity_value)
+notes_value = selected_row.get("manual_notes")
+notes_text = "" if pd.isna(notes_value) else str(notes_value)
 
 review_col_1, review_col_2 = st.columns(2)
 with review_col_1:
@@ -210,18 +225,14 @@ with review_col_1:
     )
     manual_identity = st.text_input(
         "Participant identity (optional for now)",
-        value=(
-            ""
-            if pd.isna(selected_row.get("manual_identity"))
-            else str(selected_row.get("manual_identity"))
-        ),
+        value=identity_text,
         key=f"identity_{selected_review_path.stem}_{selected_segment_id}",
     )
 
 with review_col_2:
     manual_notes = st.text_area(
         "Review notes",
-        value=str(selected_row.get("manual_notes") or ""),
+        value=notes_text,
         key=f"notes_{selected_review_path.stem}_{selected_segment_id}",
     )
 
