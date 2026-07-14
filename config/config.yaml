@@ -26,13 +26,27 @@ frame_sampling:
   max_width: null
   development_max_scenes: 50
 
+face_detection:
+  model_selection: 1
+  min_detection_confidence: 0.50
+  use_middle_prefilter: true
+  prefilter_min_face_area_ratio: 0.02
+  prefilter_max_center_distance: 0.55
+  prefilter_max_faces: 4
+
 commentary_detection:
   min_duration_seconds: 2.0
-  max_faces_allowed: 1
-  min_face_area_ratio: 0.03
+  min_face_area_ratio: 0.04
   max_center_distance: 0.35
   candidate_threshold: 0.70
   review_threshold: 0.50
+  score_weights:
+    face_presence: 0.30
+    single_face: 0.20
+    face_area: 0.20
+    centering: 0.15
+    stability: 0.10
+    duration: 0.05
 
 identity_matching:
   min_identity_confidence: 0.60
