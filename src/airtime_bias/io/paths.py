@@ -21,8 +21,14 @@ def ensure_project_dirs() -> None:
         PROXY_VIDEO_DIR,
         INTERIM_DIR / "scenes",
         INTERIM_DIR / "sampled_frames",
+        INTERIM_DIR / "sampled_frames" / "images",
+        INTERIM_DIR / "sampled_frames" / "tables",
+        INTERIM_DIR / "face_features",
+        INTERIM_DIR / "models",
         INTERIM_DIR / "embeddings",
         PROCESSED_DIR,
+        PROCESSED_DIR / "commentary_candidates",
         VALIDATION_DIR,
+        VALIDATION_DIR / "commentary_reviews",
     ]:
         path.mkdir(parents=True, exist_ok=True)
