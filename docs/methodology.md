@@ -9,19 +9,19 @@ The initial MVP focuses on individual participant commentary or talking-head seg
 1. **Episode setup**  
    The user registers local episode metadata, including episode ID, local video parts, active participants and eliminated participant.
 
-2. **Scene detection**  
-   Each episode part is divided into raw shots using PySceneDetect. The current calibrated baseline is a content threshold of `44.0` and a minimum interval between detected cuts of `2.0` seconds. These values are treated as configurable experimental parameters rather than universal defaults.
+2. **High-sensitivity scene detection**  
+   Each episode part is divided into raw shots using PySceneDetect. The current working baseline uses a content threshold of `44.0` and a configurable minimum interval between cuts. After manual review revealed genuine commentary moments below two seconds, the default minimum interval was reduced from `2.0` to `1.0` second. Saved experiments remain available so `0.5`, `1.0` and longer settings can be compared rather than treated as universal constants.
 
 3. **Representative frame sampling**  
    Three frames are extracted from each shot: start, middle and end. Start/end samples are shifted inward by a configurable margin to reduce transition frames and motion blur. Sampled frames remain local and are excluded from version control.
 
 4. **Middle-frame face prefilter**  
-   The middle frame is analyzed first using a reusable MediaPipe face detector. Obvious negatives, such as frames without a sufficiently large and reasonably central face, are rejected before start/end analysis. The prefilter is deliberately permissive because its main goal is reducing computation without sacrificing recall.
+   The middle frame is analyzed first using a reusable MediaPipe face detector. The current target is usually a single dominant face; therefore, the default prefilter allows at most one detected face while keeping this parameter adjustable for recall checks.
 
 5. **Three-frame visual consistency analysis**  
    Shots that pass the middle-frame prefilter are evaluated across start, middle and end. Frame-level features include face count, dominant face area, distance from frame center and detection confidence.
 
-6. **Interpretable commentary candidate score**  
+6. **Face-based commentary candidate score**  
    Frame features are aggregated into segment-level components:
 
    - face presence ratio;
@@ -29,45 +29,61 @@ The initial MVP focuses on individual participant commentary or talking-head seg
    - dominant-face area score;
    - face-centering score;
    - face geometry stability;
-   - duration score.
+   - duration diagnostic.
 
-   The baseline score is a weighted heuristic:
+   The current baseline score is:
 
    ```text
-   commentary_score =
+   face_commentary_score =
        0.30 × face_presence
-     + 0.20 × single_face
+     + 0.25 × single_face
      + 0.20 × face_area
      + 0.15 × centering
      + 0.10 × geometry_stability
-     + 0.05 × duration
+     + 0.00 × duration
    ```
 
-   Results are separated into three tiers: `candidate`, `review` and `reject`. These thresholds are adjustable and must be validated against manually labeled scenes.
+   Duration remains in the output for analysis but has zero default weight, preventing a genuine sub-two-second comment from being demoted solely because it is brief.
 
-7. **Participant identity matching**  
-   Candidate segments can be matched against local participant reference images using face embeddings. Identity analysis is restricted to the reduced candidate set rather than the full episode.
+7. **Independent participant lower-third scan**  
+   The lower-left area of the video is sampled at a fixed temporal interval independently of scene segmentation. An interpretable OpenCV detector combines warm rectangular structure, edge density, bright text-like components, row coherence and circular-logo evidence. Positive samples are grouped into temporal lower-third events. This route can flag a commentary moment even when it was merged into a longer raw shot.
 
-8. **Confidence-based review**  
-   High-confidence segments can be accepted automatically. Borderline candidates, uncertain identities and suspected false positives are routed to manual review.
+8. **Optional OCR and active-cast matching**  
+   OCR is applied only to representative positive lower-third crops. The extracted text is normalized and matched against the closed list of participants active in the episode. OCR is optional: the visual lower-third detector and event timeline remain fully functional without it.
 
-9. **Exposure metrics**  
-   The pipeline aggregates commentary/talking-head airtime by participant and episode.
+9. **Signal fusion**  
+   Face candidates and lower-third events are aligned by episode, part and time overlap. The output preserves the original face score and records whether evidence came from `face`, `lower_third` or `face+lower_third`. A strong visual label or matched participant name may promote a face-based reject into the review or candidate tier.
 
-10. **Elimination comparison**  
-    The eliminated participant is compared with the rest of the cast and with their own previous exposure when enough episodes are available.
+10. **Persisted manual review**  
+    Retained scenes are classified with two separate concepts:
+
+    - scene type: `commentary`, `participant_closeup`, `other`, `uncertain` or `pending`;
+    - participant identity, when known.
+
+    This separation allows a non-commentary close-up to become a useful identity example without contaminating commentary airtime. Review-queue refreshes preserve existing decisions by `segment_id`.
+
+11. **Participant identity matching**  
+    Named commentary and participant-close-up frames can be exported as a labeled identity dataset. A future recognition model should use separate development and validation examples to avoid evaluating on its own references.
+
+12. **Exposure metrics and episode events**  
+    The pipeline aggregates commentary/talking-head airtime by participant and episode. The event schema is intended to expand later to challenge wins, eliminations and participant-focused trajectory/backstory packages.
+
+13. **Elimination and narrative-event comparison**  
+    The eliminated participant can be compared with the remaining cast, their own previous exposure, challenge outcomes and the occurrence of participant-focused narrative packages when enough episodes have been annotated.
 
 ## Validation priorities
 
 Because commentary scenes are expected to be a minority class, overall accuracy is not the primary quality metric. Calibration should prioritize:
 
-- recall of manually identified commentary scenes;
+- recall of manually identified commentary scenes, including sub-two-second cases;
 - precision among retained candidates;
-- false-negative rate;
+- false-negative rate in both face and lower-third routes;
+- lower-third event precision and temporal coverage;
+- OCR participant-match accuracy when OCR is enabled;
 - candidate reduction rate;
 - proportion of scenes routed to review;
 - error propagated to participant airtime totals.
 
 ## Interpretation
 
-The project should be interpreted as exploratory media analytics. Airtime metrics can reveal patterns of narrative emphasis, but they do not directly prove producer intent, causality or manipulation.
+The project should be interpreted as exploratory media analytics. Airtime metrics and event associations can reveal patterns of narrative emphasis, but they do not directly prove producer intent, causality or manipulation.
