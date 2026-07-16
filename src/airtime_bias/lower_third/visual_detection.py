@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 
 import cv2
 import numpy as np
@@ -26,45 +26,67 @@ class LowerThirdROI:
 
 @dataclass(frozen=True)
 class LowerThirdVisualConfig:
-    """Interpretable visual detector calibrated for a copper lower-third layout.
+    """Strict, interpretable detector for the participant lower-third graphic.
 
-    The detector deliberately combines weak signals instead of relying on one exact
-    template. This makes it usable without storing copyrighted screenshots in the
-    repository and keeps every score component auditable in the output table.
+    Early versions combined generic rectangle, text, edge, and circular-logo cues.
+    That was recall-oriented but also promoted sponsor boards, countertop edges, and
+    decorative set panels. The current detector requires a conjunction of two signals
+    specific to the observed participant graphic:
+
+    1. a horizontally continuous copper/rose band across the expected label area;
+    2. two concentrated rows of light, character-sized components inside that band.
+
+    Logo and edge features remain weak supporting evidence, never sufficient alone.
     """
 
-    roi: LowerThirdROI = LowerThirdROI()
+    roi: LowerThirdROI = field(default_factory=LowerThirdROI)
     analysis_width: int = 640
-    visual_threshold: float = 0.50
+    visual_threshold: float = 0.58
+    strict_gate: bool = True
 
-    warm_hue_low_1: int = 0
-    warm_hue_high_1: int = 25
-    warm_hue_low_2: int = 165
-    warm_hue_high_2: int = 179
-    warm_saturation_min: int = 35
-    warm_saturation_max: int = 230
-    warm_value_min: int = 35
-    warm_value_max: int = 245
+    copper_hue_low_1: int = 0
+    copper_hue_high_1: int = 20
+    copper_hue_low_2: int = 170
+    copper_hue_high_2: int = 179
+    copper_saturation_min: int = 45
+    copper_saturation_max: int = 185
+    copper_value_min: int = 50
+    copper_value_max: int = 225
 
-    weight_rectangle: float = 0.30
-    weight_edge_density: float = 0.20
-    weight_text_density: float = 0.20
-    weight_text_components: float = 0.15
-    weight_logo_circularity: float = 0.10
-    weight_warm_row: float = 0.05
+    minimum_copper_density: float = 0.45
+    minimum_copper_continuity: float = 0.45
+    minimum_text_components: int = 18
+    minimum_text_line_support: float = 0.50
+
+    weight_copper_density: float = 0.40
+    weight_copper_continuity: float = 0.25
+    weight_text_lines: float = 0.15
+    weight_text_components: float = 0.10
+    weight_logo_circularity: float = 0.05
+    weight_edge_density: float = 0.05
 
     def __post_init__(self) -> None:
         if self.analysis_width < 160:
             raise ValueError("analysis_width must be at least 160 pixels.")
         if not 0.0 <= self.visual_threshold <= 1.0:
             raise ValueError("visual_threshold must be between 0 and 1.")
+        for name, value in (
+            ("minimum_copper_density", self.minimum_copper_density),
+            ("minimum_copper_continuity", self.minimum_copper_continuity),
+            ("minimum_text_line_support", self.minimum_text_line_support),
+        ):
+            if not 0.0 <= value <= 1.0:
+                raise ValueError(f"{name} must be between 0 and 1.")
+        if self.minimum_text_components < 1:
+            raise ValueError("minimum_text_components must be positive.")
+
         weights = (
-            self.weight_rectangle,
-            self.weight_edge_density,
-            self.weight_text_density,
+            self.weight_copper_density,
+            self.weight_copper_continuity,
+            self.weight_text_lines,
             self.weight_text_components,
             self.weight_logo_circularity,
-            self.weight_warm_row,
+            self.weight_edge_density,
         )
         if not np.isclose(sum(weights), 1.0, atol=1e-6):
             raise ValueError("Lower-third visual score weights must sum to 1.0.")
@@ -104,21 +126,37 @@ def _resize_for_analysis(crop: np.ndarray, width: int) -> np.ndarray:
     return cv2.resize(crop, (width, height), interpolation=cv2.INTER_AREA)
 
 
-def _warm_mask(hsv: np.ndarray, config: LowerThirdVisualConfig) -> np.ndarray:
+def _copper_mask(hsv: np.ndarray, config: LowerThirdVisualConfig) -> np.ndarray:
     lower_1 = np.array(
-        [config.warm_hue_low_1, config.warm_saturation_min, config.warm_value_min],
+        [
+            config.copper_hue_low_1,
+            config.copper_saturation_min,
+            config.copper_value_min,
+        ],
         dtype=np.uint8,
     )
     upper_1 = np.array(
-        [config.warm_hue_high_1, config.warm_saturation_max, config.warm_value_max],
+        [
+            config.copper_hue_high_1,
+            config.copper_saturation_max,
+            config.copper_value_max,
+        ],
         dtype=np.uint8,
     )
     lower_2 = np.array(
-        [config.warm_hue_low_2, config.warm_saturation_min, config.warm_value_min],
+        [
+            config.copper_hue_low_2,
+            config.copper_saturation_min,
+            config.copper_value_min,
+        ],
         dtype=np.uint8,
     )
     upper_2 = np.array(
-        [config.warm_hue_high_2, config.warm_saturation_max, config.warm_value_max],
+        [
+            config.copper_hue_high_2,
+            config.copper_saturation_max,
+            config.copper_value_max,
+        ],
         dtype=np.uint8,
     )
     return cv2.bitwise_or(
@@ -127,88 +165,112 @@ def _warm_mask(hsv: np.ndarray, config: LowerThirdVisualConfig) -> np.ndarray:
     )
 
 
-def _warm_rectangle_score(mask: np.ndarray) -> tuple[float, dict | None]:
-    height, width = mask.shape
-    close_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (41, 7))
-    open_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 5))
-    merged = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, close_kernel)
-    merged = cv2.morphologyEx(merged, cv2.MORPH_OPEN, open_kernel)
+def _expected_label_band(array: np.ndarray) -> np.ndarray:
+    """Return the stable central band occupied by the participant graphic."""
+    height, width = array.shape[:2]
+    y1, y2 = int(0.28 * height), int(0.92 * height)
+    x1, x2 = int(0.03 * width), int(0.82 * width)
+    return array[y1:y2, x1:x2]
 
-    contours, _ = cv2.findContours(merged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    best_score = 0.0
-    best_box: dict | None = None
 
-    for contour in contours:
-        x, y, box_width, box_height = cv2.boundingRect(contour)
-        if box_width <= 0 or box_height <= 0:
-            continue
-        aspect_ratio = box_width / box_height
-        area_ratio = (box_width * box_height) / (width * height)
-        fill_ratio = cv2.contourArea(contour) / max(box_width * box_height, 1)
-        vertical_center = (y + box_height / 2.0) / height
+def _copper_band_features(
+    mask: np.ndarray,
+    config: LowerThirdVisualConfig,
+) -> dict:
+    band = _expected_label_band(mask)
+    present = band > 0
+    sections = np.array_split(present, 4, axis=1)
+    section_densities = [float(section.mean()) for section in sections]
 
-        score = (
-            _clamp01((aspect_ratio - 1.5) / 4.5)
-            * _clamp01(area_ratio / 0.20)
-            * _clamp01(fill_ratio / 0.55)
-            * _clamp01((vertical_center - 0.25) / 0.50)
+    density = float(np.mean(section_densities))
+    # The logo can reduce copper occupancy in the first quarter. The remaining three
+    # quarters should still contain a continuous horizontal participant banner.
+    continuity = float(min(section_densities[1:]))
+
+    row_fraction = present.mean(axis=1)
+    window = max(3, int(round(0.25 * len(row_fraction))))
+    if len(row_fraction) >= window:
+        row_coherence = float(
+            np.convolve(row_fraction, np.ones(window, dtype=float) / window, mode="valid").max()
         )
-        if score > best_score:
-            best_score = score
-            best_box = {
-                "x": int(x),
-                "y": int(y),
-                "width": int(box_width),
-                "height": int(box_height),
-                "aspect_ratio": float(aspect_ratio),
-                "area_ratio": float(area_ratio),
-                "fill_ratio": float(fill_ratio),
-            }
+    else:
+        row_coherence = float(row_fraction.mean())
 
-    return float(best_score), best_box
+    density_score = _clamp01((density - 0.30) / 0.35)
+    continuity_score = _clamp01((continuity - 0.35) / 0.30)
+
+    return {
+        "copper_band_density": density,
+        "copper_section_1_density": section_densities[0],
+        "copper_section_2_density": section_densities[1],
+        "copper_section_3_density": section_densities[2],
+        "copper_section_4_density": section_densities[3],
+        "copper_horizontal_continuity": continuity,
+        "copper_row_coherence": row_coherence,
+        "copper_density_score": density_score,
+        "copper_continuity_score": continuity_score,
+    }
 
 
-def _text_features(hsv: np.ndarray) -> tuple[float, int, float, float]:
+def _text_line_features(hsv: np.ndarray) -> dict:
     height, width = hsv.shape[:2]
-    y1, y2 = int(0.30 * height), int(0.88 * height)
-    x1, x2 = int(0.03 * width), int(0.88 * width)
-    band = hsv[y1:y2, x1:x2]
-
+    # Exclude most of the circular logo and examine the expected two-line text area.
+    band = hsv[
+        int(0.30 * height) : int(0.92 * height),
+        int(0.14 * width) : int(0.78 * width),
+    ]
     bright_mask = cv2.inRange(
         band,
         np.array([0, 0, 145], dtype=np.uint8),
-        np.array([179, 120, 255], dtype=np.uint8),
+        np.array([179, 135, 255], dtype=np.uint8),
     )
+
     component_count, _, stats, _ = cv2.connectedComponentsWithStats(bright_mask)
-    text_area = 0
-    text_components = 0
     band_height, band_width = bright_mask.shape
+    centers_y: list[float] = []
+    text_area = 0
 
     for index in range(1, component_count):
-        _, _, component_width, component_height, area = stats[index]
-        if not (2 <= component_height <= 0.25 * band_height):
+        _, y, component_width, component_height, area = stats[index]
+        if not (2 <= component_height <= 0.28 * band_height):
             continue
-        if not (1 <= component_width <= 0.25 * band_width):
+        if not (1 <= component_width <= 0.18 * band_width):
             continue
         aspect_ratio = component_width / max(component_height, 1)
         if 0.05 <= aspect_ratio <= 12.0 and area >= 3:
             text_area += int(area)
-            text_components += 1
+            centers_y.append((float(y) + component_height / 2.0) / max(band_height, 1))
 
+    text_components = len(centers_y)
     text_density = text_area / max(band_width * band_height, 1)
-    text_density_score = _clamp01((text_density - 0.005) / 0.035)
-    text_component_score = _clamp01(text_components / 35.0)
-    return (
-        float(text_density),
-        int(text_components),
-        float(text_density_score),
-        float(text_component_score),
-    )
+
+    if centers_y:
+        histogram, _ = np.histogram(centers_y, bins=12, range=(0.0, 1.0))
+        strongest_bins = sorted(histogram.tolist(), reverse=True)[:2]
+        two_line_support = float(sum(strongest_bins) / text_components)
+    else:
+        two_line_support = 0.0
+
+    component_score = _clamp01((text_components - 15.0) / 35.0)
+    line_score = _clamp01((two_line_support - 0.40) / 0.25)
+    density_score = _clamp01((text_density - 0.04) / 0.16)
+
+    return {
+        "bright_text_density": float(text_density),
+        "bright_text_component_count": int(text_components),
+        "bright_text_density_score": density_score,
+        "bright_text_component_score": component_score,
+        "text_two_line_support": two_line_support,
+        "text_two_line_score": line_score,
+    }
 
 
 def _edge_density_score(gray: np.ndarray) -> tuple[float, float]:
     height, width = gray.shape
-    band = gray[int(0.30 * height) : int(0.88 * height), int(0.03 * width) : int(0.88 * width)]
+    band = gray[
+        int(0.30 * height) : int(0.92 * height),
+        int(0.14 * width) : int(0.78 * width),
+    ]
     edges = cv2.Canny(band, 60, 150)
     density = float((edges > 0).mean())
     return density, _clamp01((density - 0.02) / 0.10)
@@ -216,7 +278,7 @@ def _edge_density_score(gray: np.ndarray) -> tuple[float, float]:
 
 def _logo_circularity_score(gray: np.ndarray) -> float:
     height, width = gray.shape
-    left = gray[int(0.22 * height) : int(0.95 * height), : int(0.25 * width)]
+    left = gray[int(0.22 * height) : int(0.95 * height), : int(0.23 * width)]
     edges = cv2.Canny(left, 50, 140)
     contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
     best = 0.0
@@ -241,50 +303,56 @@ def _logo_circularity_score(gray: np.ndarray) -> float:
     return float(best)
 
 
-def _warm_row_score(mask: np.ndarray) -> tuple[float, float]:
-    row_fraction = mask.mean(axis=1) / 255.0
-    window = max(3, int(round(0.30 * mask.shape[0])))
-    if len(row_fraction) >= window:
-        kernel = np.ones(window, dtype=float) / window
-        max_fraction = float(np.convolve(row_fraction, kernel, mode="valid").max())
-    else:
-        max_fraction = float(row_fraction.mean())
-    return max_fraction, _clamp01((max_fraction - 0.25) / 0.55)
+def _visual_gate(
+    copper: dict,
+    text: dict,
+    config: LowerThirdVisualConfig,
+) -> tuple[bool, str | None]:
+    reasons: list[str] = []
+    if copper["copper_band_density"] < config.minimum_copper_density:
+        reasons.append("insufficient_copper_density")
+    if copper["copper_horizontal_continuity"] < config.minimum_copper_continuity:
+        reasons.append("insufficient_horizontal_continuity")
+    if text["bright_text_component_count"] < config.minimum_text_components:
+        reasons.append("insufficient_text_components")
+    if text["text_two_line_support"] < config.minimum_text_line_support:
+        reasons.append("missing_two_line_text_pattern")
+    return not reasons, ";".join(reasons) if reasons else None
 
 
 def analyze_lower_third_frame(
     frame_bgr: np.ndarray,
     config: LowerThirdVisualConfig | None = None,
 ) -> dict:
-    """Calculate lower-third visual features for one frame.
-
-    Returns a flat dictionary suitable for direct storage in a Parquet table. The
-    final score was calibrated against the supplied positive/negative screenshots,
-    while keeping all thresholds configurable for validation on full episodes.
-    """
+    """Calculate strict lower-third visual features for one full video frame."""
     cfg = config or LowerThirdVisualConfig()
     original_height, original_width = frame_bgr.shape[:2]
     crop = crop_normalized_roi(frame_bgr, cfg.roi)
     analysis_crop = _resize_for_analysis(crop, cfg.analysis_width)
     hsv = cv2.cvtColor(analysis_crop, cv2.COLOR_BGR2HSV)
     gray = cv2.cvtColor(analysis_crop, cv2.COLOR_BGR2GRAY)
-    warm_mask = _warm_mask(hsv, cfg)
 
-    rectangle_score, rectangle_box = _warm_rectangle_score(warm_mask)
+    copper = _copper_band_features(_copper_mask(hsv, cfg), cfg)
+    text = _text_line_features(hsv)
     edge_density, edge_score = _edge_density_score(gray)
-    text_density, text_components, text_density_score, text_component_score = _text_features(hsv)
     logo_score = _logo_circularity_score(gray)
-    warm_row_fraction, warm_row_score = _warm_row_score(warm_mask)
 
     visual_score = (
-        cfg.weight_rectangle * rectangle_score
-        + cfg.weight_edge_density * edge_score
-        + cfg.weight_text_density * text_density_score
-        + cfg.weight_text_components * text_component_score
+        cfg.weight_copper_density * copper["copper_density_score"]
+        + cfg.weight_copper_continuity * copper["copper_continuity_score"]
+        + cfg.weight_text_lines * text["text_two_line_score"]
+        + cfg.weight_text_components * text["bright_text_component_score"]
         + cfg.weight_logo_circularity * logo_score
-        + cfg.weight_warm_row * warm_row_score
+        + cfg.weight_edge_density * edge_score
     )
     visual_score = _clamp01(visual_score)
+    gate_pass, rejection_reason = _visual_gate(copper, text, cfg)
+    detected = visual_score >= cfg.visual_threshold and (gate_pass or not cfg.strict_gate)
+
+    label_x = int(round(0.03 * analysis_crop.shape[1]))
+    label_y = int(round(0.28 * analysis_crop.shape[0]))
+    label_width = int(round(0.79 * analysis_crop.shape[1]))
+    label_height = int(round(0.64 * analysis_crop.shape[0]))
 
     result = {
         "frame_width": int(original_width),
@@ -293,37 +361,31 @@ def analyze_lower_third_frame(
         "roi_ymin": float(cfg.roi.ymin),
         "roi_xmax": float(cfg.roi.xmax),
         "roi_ymax": float(cfg.roi.ymax),
-        "warm_rectangle_score": round(rectangle_score, 6),
+        **{key: round(value, 6) for key, value in copper.items()},
+        **{
+            key: (int(value) if key == "bright_text_component_count" else round(value, 6))
+            for key, value in text.items()
+        },
         "edge_density": round(edge_density, 6),
         "edge_density_score": round(edge_score, 6),
-        "bright_text_density": round(text_density, 6),
-        "bright_text_component_count": int(text_components),
-        "bright_text_density_score": round(text_density_score, 6),
-        "bright_text_component_score": round(text_component_score, 6),
         "logo_circularity_score": round(logo_score, 6),
-        "warm_row_fraction": round(warm_row_fraction, 6),
-        "warm_row_score": round(warm_row_score, 6),
+        "visual_gate_pass": bool(gate_pass),
+        "visual_rejection_reason": rejection_reason,
         "lower_third_visual_score": round(visual_score, 6),
-        "lower_third_detected": bool(visual_score >= cfg.visual_threshold),
+        "lower_third_detected": bool(detected),
         "visual_threshold": float(cfg.visual_threshold),
+        "strict_gate": bool(cfg.strict_gate),
+        "minimum_copper_density": float(cfg.minimum_copper_density),
+        "minimum_copper_continuity": float(cfg.minimum_copper_continuity),
+        "minimum_text_components": int(cfg.minimum_text_components),
+        "minimum_text_line_support": float(cfg.minimum_text_line_support),
+        # Backward-compatible diagnostics retained for existing tables and plots.
+        "warm_rectangle_score": round(copper["copper_density_score"], 6),
+        "warm_row_fraction": round(copper["copper_row_coherence"], 6),
+        "warm_row_score": round(copper["copper_continuity_score"], 6),
+        "rectangle_x": label_x,
+        "rectangle_y": label_y,
+        "rectangle_width": label_width,
+        "rectangle_height": label_height,
     }
-
-    if rectangle_box is None:
-        result.update(
-            {
-                "rectangle_x": None,
-                "rectangle_y": None,
-                "rectangle_width": None,
-                "rectangle_height": None,
-            }
-        )
-    else:
-        result.update(
-            {
-                "rectangle_x": rectangle_box["x"],
-                "rectangle_y": rectangle_box["y"],
-                "rectangle_width": rectangle_box["width"],
-                "rectangle_height": rectangle_box["height"],
-            }
-        )
     return result
