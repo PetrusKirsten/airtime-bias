@@ -42,12 +42,17 @@ lower_third_detection:
     ymin: 0.70
     xmax: 0.68
     ymax: 0.96
-  visual_threshold: 0.50
-  save_score_margin: 0.08
+  visual_threshold: 0.58
+  strict_gate: true
+  minimum_copper_density: 0.45
+  minimum_copper_continuity: 0.45
+  minimum_text_components: 18
+  minimum_text_line_support: 0.50
+  save_score_margin: 0.10
   max_gap_seconds: 0.80
   min_positive_frames: 2
   event_padding_seconds: 0.25
-  strong_single_frame_threshold: 0.72
+  strong_single_frame_threshold: 0.80
   ocr_min_name_similarity: 0.68
 
 commentary_detection:
