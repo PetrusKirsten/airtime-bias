@@ -66,8 +66,16 @@ def attach_lower_third_signals(
     review_threshold: float = 0.50,
     candidate_threshold: float = 0.70,
     matched_name_threshold: float = 0.68,
+    strong_visual_candidate_threshold: float = 0.82,
+    minimum_overlap_ratio_for_candidate: float = 0.25,
 ) -> pd.DataFrame:
-    """Attach event overlap and promote likely comments using a union of signals."""
+    """Attach label events while keeping visual-only promotion conservative.
+
+    A cast-name OCR match is strong enough to create a candidate. Visual evidence by
+    itself can rescue a face reject into manual review, but cannot automatically turn
+    that reject into a high-confidence candidate. This prevents sponsor boards and set
+    graphics from propagating directly into airtime totals.
+    """
     if candidates.empty:
         return candidates.copy()
 
@@ -86,6 +94,7 @@ def attach_lower_third_signals(
         "lower_third_mean_visual_score": 0.0,
         "lower_third_matched_participant": None,
         "lower_third_name_similarity": 0.0,
+        "lower_third_ocr_confirmed": False,
         "lower_third_representative_frame_path": None,
         "lower_third_representative_crop_path": None,
         "candidate_source": "face",
@@ -106,6 +115,7 @@ def attach_lower_third_signals(
         end = candidate.get("segment_global_end_time")
         if pd.isna(start) or pd.isna(end):
             continue
+
         matching = events[events["part_id"].astype(str) == part_id].copy()
         if "episode_id" in events.columns and pd.notna(candidate.get("episode_id")):
             matching = matching[
@@ -113,6 +123,7 @@ def attach_lower_third_signals(
             ].copy()
         if matching.empty:
             continue
+
         matching["_overlap"] = matching.apply(
             lambda row: _overlap_seconds(
                 float(start),
@@ -126,13 +137,13 @@ def attach_lower_third_signals(
         if matching.empty:
             continue
 
-        best = matching.sort_values(
-            ["_overlap", "max_visual_score"], ascending=False
-        ).iloc[0]
+        best = matching.sort_values(["_overlap", "max_visual_score"], ascending=False).iloc[0]
         total_overlap = float(matching["_overlap"].sum())
         duration = max(float(end) - float(start), 1e-9)
+        overlap_ratio = min(1.0, total_overlap / duration)
         visual_score = float(pd.to_numeric(matching["max_visual_score"], errors="coerce").max())
         mean_score = float(pd.to_numeric(matching["mean_visual_score"], errors="coerce").max())
+
         similarities = pd.to_numeric(
             matching.get("participant_name_similarity", pd.Series(dtype=float)),
             errors="coerce",
@@ -152,32 +163,43 @@ def attach_lower_third_signals(
             if not matched_rows.empty
             else None
         )
+        ocr_confirmed = (
+            matched_participant is not None and name_similarity >= matched_name_threshold
+        )
 
-        lower_signal = max(visual_score, name_similarity)
         face_score = float(candidate.get("face_commentary_score") or 0.0)
+        face_tier = str(candidate.get("face_candidate_tier", "reject"))
+        lower_signal = max(visual_score, name_similarity)
         combined_score = 1.0 - (1.0 - face_score) * (1.0 - lower_signal)
         combined_score = max(0.0, min(1.0, combined_score))
+        strong_visual_overlap = (
+            visual_score >= strong_visual_candidate_threshold
+            and overlap_ratio >= minimum_overlap_ratio_for_candidate
+        )
 
-        if matched_participant is not None and name_similarity >= matched_name_threshold:
+        if ocr_confirmed:
             tier = "candidate"
-        elif combined_score >= candidate_threshold:
+        elif face_tier == "candidate":
             tier = "candidate"
-        elif combined_score >= review_threshold or visual_score >= review_threshold:
+        elif face_tier == "review":
+            tier = "candidate" if strong_visual_overlap and combined_score >= candidate_threshold else "review"
+        elif strong_visual_overlap or combined_score >= review_threshold:
             tier = "review"
         else:
-            tier = str(candidate.get("face_candidate_tier", "reject"))
+            tier = face_tier
 
-        source = "face+lower_third" if face_score >= review_threshold else "lower_third"
+        source = "face+lower_third" if face_tier in {"candidate", "review"} else "lower_third"
         output.at[index, "lower_third_detected"] = True
         output.at[index, "lower_third_event_ids"] = ",".join(
             matching["lower_third_event_id"].astype(str).tolist()
         )
         output.at[index, "lower_third_overlap_seconds"] = total_overlap
-        output.at[index, "lower_third_overlap_ratio"] = min(1.0, total_overlap / duration)
+        output.at[index, "lower_third_overlap_ratio"] = overlap_ratio
         output.at[index, "lower_third_max_visual_score"] = visual_score
         output.at[index, "lower_third_mean_visual_score"] = mean_score
         output.at[index, "lower_third_matched_participant"] = matched_participant
         output.at[index, "lower_third_name_similarity"] = name_similarity
+        output.at[index, "lower_third_ocr_confirmed"] = bool(ocr_confirmed)
         output.at[index, "lower_third_representative_frame_path"] = best.get(
             "representative_full_frame_path"
         )
