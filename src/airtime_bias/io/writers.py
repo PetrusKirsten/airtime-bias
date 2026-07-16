@@ -15,13 +15,7 @@ _MANUAL_REVIEW_COLUMNS = (
 
 
 def _looks_like_fresh_review_queue(df: pd.DataFrame) -> bool:
-    """Return True when an automatic queue rebuild contains only blank defaults.
-
-    The manual review page saves the complete queue, including reviewed rows. An
-    automatic "create or refresh" action, in contrast, initializes every manual
-    field to pending/blank. Distinguishing these cases prevents an automatic refresh
-    from erasing work while still allowing new manual decisions to be written.
-    """
+    """Return True when an automatic queue rebuild contains only blank defaults."""
     if df.empty or "segment_id" not in df.columns:
         return False
 
@@ -35,7 +29,7 @@ def _looks_like_fresh_review_queue(df: pd.DataFrame) -> bool:
     commentary_blank = commentary.isna().all()
 
     identities = df.get("manual_identity", pd.Series(pd.NA, index=df.index))
-    identities_blank = identities.isna().all() | identities.fillna("").astype(str).str.strip().eq("").all()
+    identities_blank = identities.isna().all() or identities.fillna("").astype(str).str.strip().eq("").all()
 
     notes = df.get("manual_notes", pd.Series("", index=df.index))
     notes_blank = notes.fillna("").astype(str).str.strip().eq("").all()
@@ -47,6 +41,32 @@ def _looks_like_fresh_review_queue(df: pd.DataFrame) -> bool:
         and identities_blank
         and notes_blank
     )
+
+
+def _infer_legacy_scene_types(df: pd.DataFrame) -> pd.Series:
+    """Infer the richer scene taxonomy from legacy boolean review decisions."""
+    inferred: list[str] = []
+    for _, row in df.iterrows():
+        existing_type = row.get("manual_scene_type")
+        if pd.notna(existing_type) and str(existing_type) not in {"", "pending", "nan"}:
+            inferred.append(str(existing_type))
+            continue
+
+        status = str(row.get("manual_review_status", "pending"))
+        commentary_value = row.get("manual_is_commentary")
+        identity_value = row.get("manual_identity")
+        if status == "uncertain":
+            scene_type = "uncertain"
+        elif pd.notna(commentary_value) and bool(commentary_value):
+            scene_type = "commentary"
+        elif pd.notna(commentary_value) and not bool(commentary_value) and pd.notna(identity_value):
+            scene_type = "participant_closeup"
+        elif pd.notna(commentary_value) and not bool(commentary_value):
+            scene_type = "other"
+        else:
+            scene_type = "pending"
+        inferred.append(scene_type)
+    return pd.Series(inferred, index=df.index, dtype="string")
 
 
 def _preserve_review_annotations(df: pd.DataFrame, path: Path) -> pd.DataFrame:
@@ -79,10 +99,6 @@ def _preserve_review_annotations(df: pd.DataFrame, path: Path) -> pd.DataFrame:
         refreshed["manual_review_status"] = "pending"
     refreshed["manual_review_status"] = refreshed["manual_review_status"].fillna("pending")
 
-    if "manual_scene_type" not in refreshed.columns:
-        refreshed["manual_scene_type"] = "pending"
-    refreshed["manual_scene_type"] = refreshed["manual_scene_type"].fillna("pending")
-
     if "manual_is_commentary" not in refreshed.columns:
         refreshed["manual_is_commentary"] = pd.Series(
             pd.NA, index=refreshed.index, dtype="boolean"
@@ -93,10 +109,16 @@ def _preserve_review_annotations(df: pd.DataFrame, path: Path) -> pd.DataFrame:
         )
 
     if "manual_identity" not in refreshed.columns:
-        refreshed["manual_identity"] = pd.Series(pd.NA, index=refreshed.index, dtype="string")
+        refreshed["manual_identity"] = pd.Series(
+            pd.NA, index=refreshed.index, dtype="string"
+        )
+    else:
+        refreshed["manual_identity"] = refreshed["manual_identity"].astype("string")
+
     if "manual_notes" not in refreshed.columns:
         refreshed["manual_notes"] = ""
     refreshed["manual_notes"] = refreshed["manual_notes"].fillna("")
+    refreshed["manual_scene_type"] = _infer_legacy_scene_types(refreshed)
     return refreshed
 
 
