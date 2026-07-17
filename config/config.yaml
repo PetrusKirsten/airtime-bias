@@ -14,7 +14,7 @@ paths:
 scene_detection:
   detector: content
   threshold: 44.0
-  min_scene_len_seconds: 2.0
+  min_scene_len_seconds: 1.0
 
 frame_sampling:
   frame_positions:
@@ -35,19 +35,40 @@ face_detection:
   prefilter_max_center_distance: 0.55
   prefilter_max_faces: 1
 
+lower_third_detection:
+  sample_interval_seconds: 0.50
+  roi:
+    xmin: 0.02
+    ymin: 0.70
+    xmax: 0.68
+    ymax: 0.96
+  visual_threshold: 0.58
+  strict_gate: true
+  minimum_copper_density: 0.45
+  minimum_copper_continuity: 0.45
+  minimum_text_components: 18
+  minimum_text_line_support: 0.50
+  save_score_margin: 0.10
+  max_gap_seconds: 0.80
+  min_positive_frames: 2
+  event_padding_seconds: 0.25
+  strong_single_frame_threshold: 0.80
+  ocr_min_name_similarity: 0.68
+
 commentary_detection:
   min_duration_seconds: 2.0
   min_face_area_ratio: 0.04
   max_center_distance: 0.35
   candidate_threshold: 0.70
   review_threshold: 0.50
+  lower_third_name_threshold: 0.68
   score_weights:
     face_presence: 0.30
-    single_face: 0.20
+    single_face: 0.25
     face_area: 0.20
     centering: 0.15
     stability: 0.10
-    duration: 0.05
+    duration: 0.00
 
 identity_matching:
   min_identity_confidence: 0.60
