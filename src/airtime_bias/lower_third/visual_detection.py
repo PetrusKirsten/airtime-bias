@@ -50,7 +50,10 @@ class LowerThirdVisualConfig:
 
     minimum_copper_density: float = 0.45
     minimum_copper_continuity: float = 0.45
-    minimum_text_components: int = 18
+    # Connected-component counts vary across OpenCV builds and rasterization details.
+    # Keep this as a modest structural check; copper continuity + two-line support
+    # provide the stronger safeguards against sponsor boards and set graphics.
+    minimum_text_components: int = 12
     minimum_text_line_support: float = 0.50
 
     weight_copper_density: float = 0.40
