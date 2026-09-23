@@ -47,6 +47,7 @@ def test_visual_detector_finds_synthetic_lower_third():
         _synthetic_label_frame(), LowerThirdVisualConfig(visual_threshold=0.40)
     )
     assert result["lower_third_visual_score"] >= 0.40
+    assert result["visual_gate_pass"] is True
     assert result["lower_third_detected"] is True
 
 
@@ -54,7 +55,11 @@ def test_visual_detector_rejects_plain_frame():
     frame = np.zeros((720, 1280, 3), dtype=np.uint8)
     frame[:] = (30, 40, 50)
     result = analyze_lower_third_frame(frame)
-    assert result["lower_third_visual_score"] < 0.50
+    # With the strict detector, a flat warm-colored frame may receive a visual
+    # score from the copper-band features. It must still be rejected because
+    # it lacks the required text structure.
+    assert result["visual_gate_pass"] is False
+    assert "insufficient_text_components" in str(result["visual_rejection_reason"])
     assert result["lower_third_detected"] is False
 
 
