@@ -21,13 +21,14 @@ def get_sampling_timestamps(
     end_time: float,
     frame_positions: Sequence[str] = SUPPORTED_FRAME_POSITIONS,
     edge_margin_seconds: float = 0.25,
+    short_scene_threshold_seconds: float = 2.0,
+    short_scene_edge_fraction: float = 0.30,
 ) -> dict[str, float]:
     """Return local video timestamps for representative scene frames.
 
-    Start and end samples are moved slightly away from detected cuts to reduce
-    the chance of capturing transitions, black frames, or motion blur. The
-    effective margin is capped at 20% of scene duration so short scenes remain
-    valid.
+    Short scenes are sampled farther from detected cuts using normalized
+    positions (30%, 50%, 70% by default). Longer scenes keep the original
+    fixed edge-margin strategy.
     """
     start_time = float(start_time)
     end_time = float(end_time)
@@ -44,8 +45,16 @@ def get_sampling_timestamps(
         raise ValueError("At least one frame position must be selected.")
     if edge_margin_seconds < 0:
         raise ValueError("edge_margin_seconds must be non-negative.")
+    if short_scene_threshold_seconds <= 0:
+        raise ValueError("short_scene_threshold_seconds must be positive.")
+    if not 0.0 < short_scene_edge_fraction < 0.5:
+        raise ValueError("short_scene_edge_fraction must be between 0 and 0.5.")
 
-    margin = min(float(edge_margin_seconds), duration * 0.20)
+    if duration <= float(short_scene_threshold_seconds):
+        margin = duration * float(short_scene_edge_fraction)
+    else:
+        margin = min(float(edge_margin_seconds), duration * 0.20)
+
     candidates = {
         "start": start_time + margin,
         "middle": start_time + (duration / 2.0),
@@ -81,6 +90,8 @@ def sample_frames_from_scenes(
     output_dir: str | Path,
     frame_positions: Sequence[str] = SUPPORTED_FRAME_POSITIONS,
     edge_margin_seconds: float = 0.25,
+    short_scene_threshold_seconds: float = 2.0,
+    short_scene_edge_fraction: float = 0.30,
     jpeg_quality: int = 85,
     max_width: int | None = None,
     overwrite: bool = False,
@@ -167,6 +178,8 @@ def sample_frames_from_scenes(
                     end_time=part_end,
                     frame_positions=frame_positions,
                     edge_margin_seconds=edge_margin_seconds,
+                    short_scene_threshold_seconds=short_scene_threshold_seconds,
+                    short_scene_edge_fraction=short_scene_edge_fraction,
                 )
             except ValueError as exc:
                 timestamps = {}
