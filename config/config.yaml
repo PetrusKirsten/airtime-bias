@@ -22,6 +22,8 @@ frame_sampling:
     - middle
     - end
   edge_margin_seconds: 0.25
+  short_scene_threshold_seconds: 2.0
+  short_scene_edge_fraction: 0.30
   jpeg_quality: 85
   max_width: null
   development_max_scenes: 50
