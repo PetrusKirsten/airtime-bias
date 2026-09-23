@@ -1,1 +1,59 @@
-import pytest\n\nfrom airtime_bias.video.frame_sampling import get_sampling_timestamps\n\n\ndef test_short_scene_samples_at_normalized_inner_positions():\n    timestamps = get_sampling_timestamps(\n        start_time=10.0,\n        end_time=11.0,\n        edge_margin_seconds=0.25,\n    )\n\n    assert timestamps["start"] == pytest.approx(10.30)\n    assert timestamps["middle"] == pytest.approx(10.50)\n    assert timestamps["end"] == pytest.approx(10.70)\n\n\ndef test_two_second_scene_uses_short_scene_strategy():\n    timestamps = get_sampling_timestamps(\n        start_time=20.0,\n        end_time=22.0,\n        edge_margin_seconds=0.25,\n    )\n\n    assert timestamps["start"] == pytest.approx(20.60)\n    assert timestamps["middle"] == pytest.approx(21.00)\n    assert timestamps["end"] == pytest.approx(21.40)\n\n\ndef test_long_scene_keeps_fixed_edge_margin():\n    timestamps = get_sampling_timestamps(\n        start_time=30.0,\n        end_time=34.0,\n        edge_margin_seconds=0.25,\n    )\n\n    assert timestamps["start"] == pytest.approx(30.25)\n    assert timestamps["middle"] == pytest.approx(32.00)\n    assert timestamps["end"] == pytest.approx(33.75)\n\n\ndef test_sampling_preserves_requested_positions_only():\n    timestamps = get_sampling_timestamps(\n        start_time=0.0,\n        end_time=1.5,\n        frame_positions=("middle",),\n    )\n\n    assert set(timestamps) == {"middle"}\n    assert timestamps["middle"] == pytest.approx(0.75)\n\n\ndef test_invalid_short_scene_fraction_is_rejected():\n    with pytest.raises(ValueError):\n        get_sampling_timestamps(\n            start_time=0.0,\n            end_time=1.0,\n            short_scene_edge_fraction=0.50,\n        )\n
+import pytest
+
+from airtime_bias.video.frame_sampling import get_sampling_timestamps
+
+
+def test_short_scene_samples_at_normalized_inner_positions():
+    timestamps = get_sampling_timestamps(
+        start_time=10.0,
+        end_time=11.0,
+        edge_margin_seconds=0.25,
+    )
+
+    assert timestamps["start"] == pytest.approx(10.30)
+    assert timestamps["middle"] == pytest.approx(10.50)
+    assert timestamps["end"] == pytest.approx(10.70)
+
+
+def test_two_second_scene_uses_short_scene_strategy():
+    timestamps = get_sampling_timestamps(
+        start_time=20.0,
+        end_time=22.0,
+        edge_margin_seconds=0.25,
+    )
+
+    assert timestamps["start"] == pytest.approx(20.60)
+    assert timestamps["middle"] == pytest.approx(21.00)
+    assert timestamps["end"] == pytest.approx(21.40)
+
+
+def test_long_scene_keeps_fixed_edge_margin():
+    timestamps = get_sampling_timestamps(
+        start_time=30.0,
+        end_time=34.0,
+        edge_margin_seconds=0.25,
+    )
+
+    assert timestamps["start"] == pytest.approx(30.25)
+    assert timestamps["middle"] == pytest.approx(32.00)
+    assert timestamps["end"] == pytest.approx(33.75)
+
+
+def test_sampling_preserves_requested_positions_only():
+    timestamps = get_sampling_timestamps(
+        start_time=0.0,
+        end_time=1.5,
+        frame_positions=("middle",),
+    )
+
+    assert set(timestamps) == {"middle"}
+    assert timestamps["middle"] == pytest.approx(0.75)
+
+
+def test_invalid_short_scene_fraction_is_rejected():
+    with pytest.raises(ValueError):
+        get_sampling_timestamps(
+            start_time=0.0,
+            end_time=1.0,
+            short_scene_edge_fraction=0.50,
+        )
