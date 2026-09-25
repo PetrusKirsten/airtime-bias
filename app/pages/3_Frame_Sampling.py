@@ -13,7 +13,7 @@ from airtime_bias.io.artifact_history import (
     preferred_artifact_index,
     write_manifest,
 )
-from airtime_bias.io.loaders import load_table
+from airtime_bias.io.loaders import load_config, load_table
 from airtime_bias.io.paths import INTERIM_DIR, ensure_project_dirs
 from airtime_bias.io.writers import save_table
 from airtime_bias.video.frame_sampling import (
@@ -35,6 +35,15 @@ and can be reopened later without recreating the frames.
 SCENE_DIR = INTERIM_DIR / "scenes"
 SAMPLED_FRAMES_DIR = INTERIM_DIR / "sampled_frames"
 TABLE_DIR = SAMPLED_FRAMES_DIR / "tables"
+
+config = load_config()
+sampling_defaults = config.get("frame_sampling", {})
+short_scene_threshold_seconds = float(
+    sampling_defaults.get("short_scene_threshold_seconds", 2.0)
+)
+short_scene_edge_fraction = float(
+    sampling_defaults.get("short_scene_edge_fraction", 0.30)
+)
 
 scene_files = list_artifacts(SCENE_DIR, "*_segments.parquet")
 if not scene_files:
@@ -106,7 +115,10 @@ with param_col_1:
         "Frame positions",
         options=list(SUPPORTED_FRAME_POSITIONS),
         default=list(SUPPORTED_FRAME_POSITIONS),
-        help="Start and end samples are shifted inward by the selected edge margin.",
+        help=(
+            "Short scenes use adaptive inward sampling; longer scenes use the "
+            "selected edge margin."
+        ),
     )
 
 with param_col_2:
@@ -114,9 +126,12 @@ with param_col_2:
         "Edge margin (seconds)",
         min_value=0.0,
         max_value=1.0,
-        value=0.25,
+        value=float(sampling_defaults.get("edge_margin_seconds", 0.25)),
         step=0.05,
-        help="Reduces transition, black-frame, and motion-blur captures near cuts.",
+        help=(
+            "Used for scenes longer than the adaptive short-scene threshold. "
+            "Short scenes are sampled farther inward automatically."
+        ),
     )
 
 with param_col_3:
@@ -163,6 +178,12 @@ if development_mode:
 else:
     scenes_to_process = selected_scenes.copy()
 
+st.caption(
+    f"Adaptive short-scene sampling: scenes ≤ {short_scene_threshold_seconds:.1f}s "
+    f"use approximately {short_scene_edge_fraction:.0%} / 50% / "
+    f"{1.0 - short_scene_edge_fraction:.0%} positions."
+)
+
 if not frame_positions:
     st.warning("Select at least one frame position.")
     st.stop()
@@ -186,6 +207,8 @@ run_parameters = {
     "mode": mode_token,
     "frame_positions": list(frame_positions),
     "edge_margin_seconds": float(edge_margin_seconds),
+    "short_scene_threshold_seconds": short_scene_threshold_seconds,
+    "short_scene_edge_fraction": short_scene_edge_fraction,
     "jpeg_quality": int(jpeg_quality),
     "max_width": resize_mode,
 }
@@ -318,6 +341,8 @@ if st.button("Extract representative frames", type="primary"):
                 output_dir=experiment_dir,
                 frame_positions=frame_positions,
                 edge_margin_seconds=edge_margin_seconds,
+                short_scene_threshold_seconds=short_scene_threshold_seconds,
+                short_scene_edge_fraction=short_scene_edge_fraction,
                 jpeg_quality=jpeg_quality,
                 max_width=resize_mode,
                 overwrite=overwrite,
@@ -327,6 +352,10 @@ if st.button("Extract representative frames", type="primary"):
             frame_samples["sampling_run_id"] = experiment_name
             frame_samples["sampling_config_id"] = config_token
             frame_samples["sampling_edge_margin_seconds"] = float(edge_margin_seconds)
+            frame_samples["sampling_short_scene_threshold_seconds"] = (
+                short_scene_threshold_seconds
+            )
+            frame_samples["sampling_short_scene_edge_fraction"] = short_scene_edge_fraction
             frame_samples["sampling_jpeg_quality"] = int(jpeg_quality)
             frame_samples["sampling_max_width"] = resize_mode
             save_table(frame_samples, output_table_path)
